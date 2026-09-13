@@ -198,7 +198,7 @@ def get_conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """Crea el esquema y puebla 3 órdenes de prueba en etapas distintas."""
+    """Crea el esquema y puebla 4 órdenes de prueba en etapas distintas."""
     with get_conn() as conn:
         conn.executescript(
             """
@@ -241,6 +241,8 @@ def init_db() -> None:
         existing = conn.execute("SELECT COUNT(*) AS n FROM orders").fetchone()["n"]
         if existing == 0:
             _seed_orders(conn)
+        else:
+            _ensure_seed_order_004(conn)
 
 
 def reset_demo() -> None:
@@ -407,6 +409,50 @@ def _seed_orders(conn: sqlite3.Connection) -> None:
             ),
         ],
     )
+    _seed_order_004(conn, t0)
+
+
+def _seed_order_004(conn: sqlite3.Connection, t0: datetime | None = None) -> None:
+    """BOM en espera de confirmación de producción P01 (SLA 3 días)."""
+    t0 = t0 or datetime.now().replace(microsecond=0)
+    inicio_004 = t0 - timedelta(days=2)
+    pago_004 = t0 - timedelta(hours=4)
+    _insert_order(
+        conn,
+        {
+            "bom_code": "BOM-2026-004",
+            "descripcion": "Mainboards control residencial — lote de reposición",
+            "sku": "MB-RES-REP",
+            "cantidad": 320,
+            "proveedor_01": "Shenzhen Electronics Co.",
+            "proveedor_02": "Dongguan Assembly Ltd.",
+            "invoice_nombre": "INV-SE-9102.pdf",
+            "slack_link": "https://slack.com/archives/C01COMPRAS/p1726000004",
+            "fecha_inicio": fmt_dt(inicio_004),
+            "etapa": ETAPA_PRODUCCION,
+            "created_at": fmt_dt(inicio_004),
+            "invoice_paid_at": fmt_dt(pago_004),
+            "created_by": ROL_COMPRAS,
+        },
+        [
+            (ROL_COMPRAS, "Orden creada", "Cotización INV-SE-9102.pdf adjunta", inicio_004),
+            (
+                ROL_FINANZAS,
+                "Invoice pagado",
+                "SLA 2 días cumplido. Pendiente confirmación de Compras (SLA 3 días)",
+                pago_004,
+            ),
+        ],
+    )
+
+
+def _ensure_seed_order_004(conn: sqlite3.Connection) -> None:
+    row = conn.execute(
+        "SELECT 1 FROM orders WHERE bom_code = ?",
+        ("BOM-2026-004",),
+    ).fetchone()
+    if row is None:
+        _seed_order_004(conn)
 
 
 def fetch_orders() -> list[dict]:
@@ -976,7 +1022,9 @@ def render_sidebar() -> str:
         )
 
         with st.expander("Datos de demostración", icon=":material/database:"):
-            st.caption("Tres BOM de prueba en invoice, ensamblado y envío a Perú.")
+            st.caption(
+                "Cuatro BOM de prueba: invoice, producción P01, ensamblado y envío a Perú."
+            )
             if st.button("Restablecer demo", icon=":material/restart_alt:"):
                 reset_demo()
                 st.toast("Demo restablecida", icon=":material/check:")
