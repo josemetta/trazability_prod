@@ -1,7 +1,8 @@
 """Metta · Trazabilidad logística China → Lima.
 
-MVP Streamlit para el control de órdenes de compra (BOM), pagos con SLA
-y seguimiento de producción / tránsito desde China hasta el taller en Lima.
+MVP Streamlit para el control de solicitudes/órdenes de compra (BOM PCB),
+pagos con SLA y seguimiento de acopio / producción / tránsito desde China
+hasta el taller en Lima (proceso de 10 etapas).
 """
 
 from __future__ import annotations
@@ -29,123 +30,155 @@ st.set_page_config(
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data" / "trazabilidad.db"
 UPLOAD_DIR = BASE_DIR / "uploads"
+SCHEMA_VERSION = 2
 
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
-ROL_COMPRAS = "usuario_01"
-ROL_FINANZAS = "usuario_02"
-ROL_ADUANAS = "usuario_03"
-ROLES_VALIDOS = {ROL_COMPRAS, ROL_FINANZAS, ROL_ADUANAS}
+ROL_SOLICITUD = "usuario_01"  # José
+ROL_LOGISTICA = "usuario_02"  # Adrián
+ROL_FINANZAS = "usuario_03"  # Julio
+ROL_TALLER = "usuario_04"  # Lucho
+ROLES_VALIDOS = {ROL_SOLICITUD, ROL_LOGISTICA, ROL_FINANZAS, ROL_TALLER}
 
 ROLES = {
-    ROL_COMPRAS: {
-        "label": "Usuario 01 · Compras y logística internacional",
-        "corto": "Compras / logística",
+    ROL_SOLICITUD: {
+        "label": "Usuario 01 · José · Solicitud de compra",
+        "corto": "José · Solicitud",
+        "icon": ":material/assignment_add:",
+    },
+    ROL_LOGISTICA: {
+        "label": "Usuario 02 · Adrián · Órdenes / logística China",
+        "corto": "Adrián · Logística",
         "icon": ":material/shopping_cart:",
     },
     ROL_FINANZAS: {
-        "label": "Usuario 02 · Finanzas / pagos",
-        "corto": "Finanzas",
+        "label": "Usuario 03 · Julio · Finanzas / pagos",
+        "corto": "Julio · Finanzas",
         "icon": ":material/payments:",
     },
-    ROL_ADUANAS: {
-        "label": "Usuario 03 · Operaciones y aduanas (Lima)",
-        "corto": "Aduanas Lima",
-        "icon": ":material/warehouse:",
+    ROL_TALLER: {
+        "label": "Usuario 04 · Lucho · Recepción taller Lima",
+        "corto": "Lucho · Taller",
+        "icon": ":material/factory:",
     },
 }
 
-# Etapas de la máquina de estados (orden operativo)
-ETAPA_PAGO_INVOICE = "pago_invoice"
-ETAPA_PRODUCCION = "produccion_p1"
+ETAPA_SOLICITUD = "solicitud_compra"
+ETAPA_ORDEN_BOM = "orden_bom"
+ETAPA_PAGO_INVOICE_P01 = "pago_invoice_p01"
+ETAPA_ACOPIO_P01 = "acopio_p01"
 ETAPA_TRANSITO_P2 = "transito_p2"
-ETAPA_ENSAMBLADO = "ensamblado_p2"
-ETAPA_ENVIO = "envio_peru"
-ETAPA_ADUANAS = "aduanas_lima"
-ETAPA_ARANCELES = "pago_aranceles"
+ETAPA_PAGO_INVOICE_P02 = "pago_invoice_p02"
+ETAPA_PRODUCCION_P02 = "produccion_p02"
+ETAPA_ENVIO_PERU = "envio_peru"
+ETAPA_ADUANAS = "aduanas_aranceles"
 ETAPA_TALLER = "taller_lima"
 
-# La etapa 1 (creación) ocurre en el formulario; el BOM nace en etapa 2.
-TOTAL_ETAPAS = 9
+TOTAL_ETAPAS = 10
 
 ETAPAS = {
-    ETAPA_PAGO_INVOICE: {
+    ETAPA_SOLICITUD: {
+        "orden": 1,
+        "nombre": "Solicitud de compra",
+        "detalle": "Usuario 01 genera la solicitud y adjunta la Orden General del ERP",
+        "region": "lima",
+    },
+    ETAPA_ORDEN_BOM: {
         "orden": 2,
-        "nombre": "Pago de invoice",
-        "detalle": "Espera de pago al Proveedor 01 · SLA 2 días",
+        "nombre": "Orden BOM PCB",
+        "detalle": "Usuario 02 sube la Purchase Order o enlace de Slack · SLA 4 días",
+        "region": "lima",
+    },
+    ETAPA_PAGO_INVOICE_P01: {
+        "orden": 3,
+        "nombre": "Pago invoice P01 (QZ)",
+        "detalle": "Usuario 03 marca invoice pagado y adjunta comprobante · SLA 2 días",
         "region": "china",
     },
-    ETAPA_PRODUCCION: {
-        "orden": 3,
-        "nombre": "Producción Proveedor 01",
-        "detalle": "Confirmar pedido registrado / en producción · SLA 3 días",
+    ETAPA_ACOPIO_P01: {
+        "orden": 4,
+        "nombre": "Acopio P01 (QZ)",
+        "detalle": "Usuario 02 confirma pedido registrado / en acopio · SLA 2 días",
         "region": "china",
     },
     ETAPA_TRANSITO_P2: {
-        "orden": 4,
-        "nombre": "Tránsito a Proveedor 02",
-        "detalle": "Conteo automático de 12 días",
-        "region": "china",
-    },
-    ETAPA_ENSAMBLADO: {
         "orden": 5,
-        "nombre": "Ensamblado Proveedor 02",
-        "detalle": "Fase de 13 días de producción",
+        "nombre": "Tránsito a P02 (JLC)",
+        "detalle": "Conteo automático de 4 días hacia Proveedor 02",
         "region": "china",
     },
-    ETAPA_ENVIO: {
+    ETAPA_PAGO_INVOICE_P02: {
         "orden": 6,
-        "nombre": "Envío internacional a Perú",
-        "detalle": "Mainboards en tránsito marítimo/aéreo · 7 días",
+        "nombre": "Pago invoice P02 (JLC)",
+        "detalle": "Usuario 03 marca invoice pagado y adjunta comprobante · SLA 1 día",
+        "region": "china",
+    },
+    ETAPA_PRODUCCION_P02: {
+        "orden": 7,
+        "nombre": "Producción P02 (JLC)",
+        "detalle": "Usuario 02 marca en producción · SLA 2 días · fase 21 días",
+        "region": "china",
+    },
+    ETAPA_ENVIO_PERU: {
+        "orden": 8,
+        "nombre": "Envío a Perú",
+        "detalle": "Usuario 02 marca tránsito a Perú · SLA 21 días · tránsito 7 días",
         "region": "transito",
     },
     ETAPA_ADUANAS: {
-        "orden": 7,
-        "nombre": "Carga en aduanas Lima",
-        "detalle": "Pendiente de pago de aranceles",
-        "region": "aduanas",
-    },
-    ETAPA_ARANCELES: {
-        "orden": 8,
-        "nombre": "Aranceles pagados",
-        "detalle": "2 días hasta entrega en taller",
+        "orden": 9,
+        "nombre": "Aduanas / aranceles",
+        "detalle": "Usuario 03 paga aranceles + DHL y adjunta comprobante · SLA 7 días",
         "region": "aduanas",
     },
     ETAPA_TALLER: {
-        "orden": 9,
-        "nombre": "En taller · listo para integración",
-        "detalle": "Entrega final en Lima",
+        "orden": 10,
+        "nombre": "Recepción taller Lima",
+        "detalle": "Usuario 04 confirma recepción en taller · SLA 1 día",
         "region": "taller",
     },
 }
 
-DURACION_TRANSITO_P2 = 12
-DURACION_ENSAMBLADO = 13
+DURACION_TRANSITO_P2 = 4
+DURACION_PRODUCCION_P02 = 21
 DURACION_ENVIO = 7
-DURACION_TALLER = 2
-SLA_INVOICE_DIAS = 2
-SLA_PRODUCCION_DIAS = 3
-SLA_ARANCELES_DIAS = 1
+
+SLA_ORDEN_BOM_DIAS = 4
+SLA_INVOICE_P01_DIAS = 2
+SLA_ACOPIO_DIAS = 2
+SLA_INVOICE_P02_DIAS = 1
+SLA_PRODUCCION_DIAS = 2
+SLA_ENVIO_DIAS = 21
+SLA_ARANCELES_DIAS = 7
+SLA_TALLER_DIAS = 1
+
+PROVEEDOR_QZ = "Shenzhen QZ Industrial Co., Ltd (QZ)"
+PROVEEDOR_JLC = "JiaLiChuang (HongKong) Co., Limited (JLC)"
 
 PROVEEDORES_01 = [
+    PROVEEDOR_QZ,
     "Shenzhen Electronics Co.",
     "Foxconn Shenzhen",
     "Huaqin Technology",
 ]
 PROVEEDORES_02 = [
+    PROVEEDOR_JLC,
     "Dongguan Assembly Ltd.",
     "Suzhou Integration Works",
     "Ningbo Board Assembly",
 ]
 
 COLORES_FASE = {
-    "Pago de invoice": "#B45309",
-    "Producción P01": "#0F6E6B",
+    "Solicitud de compra": "#64748B",
+    "Orden BOM PCB": "#0F766E",
+    "Pago invoice P01": "#B45309",
+    "Acopio P01 (QZ)": "#0F6E6B",
     "Tránsito a P02": "#0E7490",
-    "Ensamblado P02": "#1D4E89",
+    "Pago invoice P02": "#C2410C",
+    "Producción P02 (JLC)": "#1D4E89",
     "Envío a Perú": "#C45C26",
     "Aduanas / aranceles": "#7C3AED",
-    "Entrega a taller": "#15803D",
+    "Recepción taller": "#15803D",
 }
 
 
@@ -197,11 +230,38 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _current_schema_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='meta'"
+    ).fetchone()
+    if row is None:
+        return 0
+    ver = conn.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()
+    return int(ver["value"]) if ver else 0
+
+
 def init_db() -> None:
-    """Crea el esquema y puebla 4 órdenes de prueba en etapas distintas."""
+    """Crea el esquema v2 (10 etapas) y puebla órdenes de demostración."""
     with get_conn() as conn:
+        version = _current_schema_version(conn)
+        if version < SCHEMA_VERSION:
+            conn.executescript(
+                """
+                DROP TABLE IF EXISTS events;
+                DROP TABLE IF EXISTS orders;
+                DROP TABLE IF EXISTS meta;
+                """
+            )
+
         conn.executescript(
             """
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bom_code TEXT UNIQUE NOT NULL,
@@ -210,16 +270,24 @@ def init_db() -> None:
                 cantidad INTEGER NOT NULL,
                 proveedor_01 TEXT NOT NULL,
                 proveedor_02 TEXT NOT NULL,
-                invoice_nombre TEXT,
+                orden_general_nombre TEXT,
+                po_nombre TEXT,
                 slack_link TEXT,
+                invoice_p01_nombre TEXT,
+                comprobante_p01_nombre TEXT,
+                invoice_p02_nombre TEXT,
+                comprobante_p02_nombre TEXT,
+                comprobante_aranceles_nombre TEXT,
                 fecha_inicio TEXT NOT NULL,
                 etapa TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                invoice_paid_at TEXT,
-                produccion_at TEXT,
+                orden_bom_at TEXT,
+                invoice_p01_paid_at TEXT,
+                acopio_at TEXT,
                 transito_p2_at TEXT,
                 llego_p2_at TEXT,
-                ensamblado_at TEXT,
+                invoice_p02_paid_at TEXT,
+                produccion_at TEXT,
                 envio_at TEXT,
                 aduanas_at TEXT,
                 aranceles_paid_at TEXT,
@@ -238,11 +306,13 @@ def init_db() -> None:
             );
             """
         )
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
+            (str(SCHEMA_VERSION),),
+        )
         existing = conn.execute("SELECT COUNT(*) AS n FROM orders").fetchone()["n"]
         if existing == 0:
             _seed_orders(conn)
-        else:
-            _ensure_seed_order_004(conn)
 
 
 def reset_demo() -> None:
@@ -285,7 +355,7 @@ def _insert_order(conn: sqlite3.Connection, payload: dict, eventos: list[tuple])
 def _seed_orders(conn: sqlite3.Connection) -> None:
     t0 = datetime.now().replace(microsecond=0)
 
-    # BOM-2026-001 · espera pago de invoice (SLA 1 día restante)
+    # BOM-2026-001 · espera generación de orden BOM (SLA 4 días · día 1)
     inicio_001 = t0 - timedelta(days=1)
     _insert_order(
         conn,
@@ -294,32 +364,33 @@ def _seed_orders(conn: sqlite3.Connection) -> None:
             "descripcion": "Mainboards control IoT v3 — lote piloto",
             "sku": "MB-IOT-V3",
             "cantidad": 250,
-            "proveedor_01": "Shenzhen Electronics Co.",
-            "proveedor_02": "Dongguan Assembly Ltd.",
-            "invoice_nombre": "INV-SE-8841.pdf",
-            "slack_link": "https://slack.com/archives/C01COMPRAS/p1726000001",
+            "proveedor_01": PROVEEDOR_QZ,
+            "proveedor_02": PROVEEDOR_JLC,
+            "orden_general_nombre": "OG-ERP-8841.pdf",
             "fecha_inicio": fmt_dt(inicio_001),
-            "etapa": ETAPA_PAGO_INVOICE,
+            "etapa": ETAPA_ORDEN_BOM,
             "created_at": fmt_dt(inicio_001),
-            "created_by": ROL_COMPRAS,
+            "created_by": ROL_SOLICITUD,
         },
         [
             (
-                ROL_COMPRAS,
-                "Orden creada",
-                "Cotización INV-SE-8841.pdf adjunta",
+                ROL_SOLICITUD,
+                "Solicitud creada",
+                "Orden General OG-ERP-8841.pdf adjunta",
                 inicio_001,
             )
         ],
     )
 
-    # BOM-2026-002 · ensamblado en Proveedor 02 (día 3 de 13)
-    inicio_002 = t0 - timedelta(days=26)
-    pago_002 = inicio_002 + timedelta(days=1)
-    prod_002 = pago_002 + timedelta(hours=6)
-    transito_002 = prod_002
+    # BOM-2026-002 · producción JLC (día 5 de 21)
+    inicio_002 = t0 - timedelta(days=18)
+    orden_002 = inicio_002 + timedelta(days=2)
+    pago_p01_002 = orden_002 + timedelta(days=1)
+    acopio_002 = pago_p01_002 + timedelta(days=1)
+    transito_002 = acopio_002
     llego_002 = transito_002 + timedelta(days=DURACION_TRANSITO_P2)
-    ensamblado_002 = llego_002 + timedelta(hours=4)
+    pago_p02_002 = llego_002 + timedelta(hours=6)
+    prod_002 = pago_p02_002 + timedelta(hours=4)
     _insert_order(
         conn,
         {
@@ -327,47 +398,48 @@ def _seed_orders(conn: sqlite3.Connection) -> None:
             "descripcion": "Mainboards gateway industrial + carcasa",
             "sku": "MB-GW-IND",
             "cantidad": 400,
-            "proveedor_01": "Foxconn Shenzhen",
-            "proveedor_02": "Suzhou Integration Works",
-            "invoice_nombre": "INV-FX-2209.pdf",
+            "proveedor_01": PROVEEDOR_QZ,
+            "proveedor_02": PROVEEDOR_JLC,
+            "orden_general_nombre": "OG-ERP-2209.pdf",
+            "po_nombre": "PO-QZ-2209.pdf",
             "slack_link": "https://slack.com/archives/C01COMPRAS/p1725000002",
+            "invoice_p01_nombre": "INV-QZ-2209.pdf",
+            "comprobante_p01_nombre": "PAY-QZ-2209.pdf",
+            "invoice_p02_nombre": "INV-JLC-2209.pdf",
+            "comprobante_p02_nombre": "PAY-JLC-2209.pdf",
             "fecha_inicio": fmt_dt(inicio_002),
-            "etapa": ETAPA_ENSAMBLADO,
+            "etapa": ETAPA_PRODUCCION_P02,
             "created_at": fmt_dt(inicio_002),
-            "invoice_paid_at": fmt_dt(pago_002),
-            "produccion_at": fmt_dt(prod_002),
+            "orden_bom_at": fmt_dt(orden_002),
+            "invoice_p01_paid_at": fmt_dt(pago_p01_002),
+            "acopio_at": fmt_dt(acopio_002),
             "transito_p2_at": fmt_dt(transito_002),
             "llego_p2_at": fmt_dt(llego_002),
-            "ensamblado_at": fmt_dt(ensamblado_002),
-            "created_by": ROL_COMPRAS,
+            "invoice_p02_paid_at": fmt_dt(pago_p02_002),
+            "produccion_at": fmt_dt(prod_002),
+            "created_by": ROL_SOLICITUD,
         },
         [
-            (ROL_COMPRAS, "Orden creada", "Invoice Foxconn adjunto", inicio_002),
-            (ROL_FINANZAS, "Invoice pagado", "SLA 2 días cumplido", pago_002),
-            (ROL_COMPRAS, "Pedido en producción", "Confirmado con Foxconn", prod_002),
-            (
-                "sistema",
-                "Llegada a Proveedor 02",
-                "Tránsito de 12 días completado",
-                llego_002,
-            ),
-            (
-                ROL_COMPRAS,
-                "Ingreso a ensamblado",
-                "Fase de 13 días iniciada",
-                ensamblado_002,
-            ),
+            (ROL_SOLICITUD, "Solicitud creada", "Orden General ERP", inicio_002),
+            (ROL_LOGISTICA, "Orden BOM generada", "PO-QZ-2209.pdf", orden_002),
+            (ROL_FINANZAS, "Invoice P01 pagado", "Comprobante QZ", pago_p01_002),
+            (ROL_LOGISTICA, "Acopio P01", "Pedido registrado en QZ", acopio_002),
+            ("sistema", "Llegada a P02", "Tránsito 4 días completado", llego_002),
+            (ROL_FINANZAS, "Invoice P02 pagado", "Comprobante JLC", pago_p02_002),
+            (ROL_LOGISTICA, "En producción P02", "Fase de 21 días iniciada", prod_002),
         ],
     )
 
-    # BOM-2026-003 · envío a Perú ya cumplió 7 días · espera marca de aduanas
+    # BOM-2026-003 · en tránsito a Perú (día 3 de 7)
     inicio_003 = t0 - timedelta(days=40)
-    pago_003 = inicio_003 + timedelta(days=1)
-    prod_003 = pago_003 + timedelta(hours=8)
-    transito_003 = prod_003
+    orden_003 = inicio_003 + timedelta(days=1)
+    pago_p01_003 = orden_003 + timedelta(days=1)
+    acopio_003 = pago_p01_003 + timedelta(days=1)
+    transito_003 = acopio_003
     llego_003 = transito_003 + timedelta(days=DURACION_TRANSITO_P2)
-    ensamblado_003 = llego_003 + timedelta(hours=3)
-    envio_003 = ensamblado_003 + timedelta(days=DURACION_ENSAMBLADO)
+    pago_p02_003 = llego_003 + timedelta(hours=4)
+    prod_003 = pago_p02_003 + timedelta(hours=3)
+    envio_003 = prod_003 + timedelta(days=DURACION_PRODUCCION_P02)
     _insert_order(
         conn,
         {
@@ -375,48 +447,48 @@ def _seed_orders(conn: sqlite3.Connection) -> None:
             "descripcion": "Lote mainboards residenciales 2026-Q3",
             "sku": "MB-RES-Q3",
             "cantidad": 800,
-            "proveedor_01": "Huaqin Technology",
-            "proveedor_02": "Ningbo Board Assembly",
-            "invoice_nombre": "INV-HQ-5510.pdf",
+            "proveedor_01": PROVEEDOR_QZ,
+            "proveedor_02": PROVEEDOR_JLC,
+            "orden_general_nombre": "OG-ERP-5510.pdf",
+            "po_nombre": "PO-QZ-5510.pdf",
             "slack_link": "https://slack.com/archives/C01COMPRAS/p1724000003",
+            "invoice_p01_nombre": "INV-QZ-5510.pdf",
+            "comprobante_p01_nombre": "PAY-QZ-5510.pdf",
+            "invoice_p02_nombre": "INV-JLC-5510.pdf",
+            "comprobante_p02_nombre": "PAY-JLC-5510.pdf",
             "fecha_inicio": fmt_dt(inicio_003),
-            "etapa": ETAPA_ENVIO,
+            "etapa": ETAPA_ENVIO_PERU,
             "created_at": fmt_dt(inicio_003),
-            "invoice_paid_at": fmt_dt(pago_003),
-            "produccion_at": fmt_dt(prod_003),
+            "orden_bom_at": fmt_dt(orden_003),
+            "invoice_p01_paid_at": fmt_dt(pago_p01_003),
+            "acopio_at": fmt_dt(acopio_003),
             "transito_p2_at": fmt_dt(transito_003),
             "llego_p2_at": fmt_dt(llego_003),
-            "ensamblado_at": fmt_dt(ensamblado_003),
+            "invoice_p02_paid_at": fmt_dt(pago_p02_003),
+            "produccion_at": fmt_dt(prod_003),
             "envio_at": fmt_dt(envio_003),
-            "created_by": ROL_COMPRAS,
+            "created_by": ROL_SOLICITUD,
         },
         [
-            (ROL_COMPRAS, "Orden creada", "Invoice Huaqin adjunto", inicio_003),
-            (ROL_FINANZAS, "Invoice pagado", "Transferencia SWIFT registrada", pago_003),
-            (ROL_COMPRAS, "Pedido en producción", "Confirmado con Huaqin", prod_003),
+            (ROL_SOLICITUD, "Solicitud creada", "Orden General ERP", inicio_003),
+            (ROL_LOGISTICA, "Orden BOM generada", "PO adjunta", orden_003),
+            (ROL_FINANZAS, "Invoice P01 pagado", "Transferencia QZ", pago_p01_003),
+            (ROL_LOGISTICA, "Acopio P01", "Registrado en QZ", acopio_003),
+            ("sistema", "Llegada a P02", "Tránsito 4 días", llego_003),
+            (ROL_FINANZAS, "Invoice P02 pagado", "Transferencia JLC", pago_p02_003),
+            (ROL_LOGISTICA, "En producción P02", "21 días de producción", prod_003),
             (
-                "sistema",
-                "Llegada a Proveedor 02",
-                "Tránsito de 12 días completado",
-                llego_003,
-            ),
-            (ROL_COMPRAS, "Ingreso a ensamblado", "Producción de 13 días", ensamblado_003),
-            (
-                ROL_COMPRAS,
-                "Mainboards en envío internacional",
-                "Despacho aéreo/marítimo a aduanas Lima",
+                ROL_LOGISTICA,
+                "Tránsito a Perú",
+                "Despacho internacional · 7 días estimados",
                 envio_003,
             ),
         ],
     )
-    _seed_order_004(conn, t0)
 
-
-def _seed_order_004(conn: sqlite3.Connection, t0: datetime | None = None) -> None:
-    """BOM en espera de confirmación de producción P01 (SLA 3 días)."""
-    t0 = t0 or datetime.now().replace(microsecond=0)
-    inicio_004 = t0 - timedelta(days=2)
-    pago_004 = t0 - timedelta(hours=4)
+    # BOM-2026-004 · espera pago invoice P01
+    inicio_004 = t0 - timedelta(days=3)
+    orden_004 = t0 - timedelta(hours=10)
     _insert_order(
         conn,
         {
@@ -424,35 +496,28 @@ def _seed_order_004(conn: sqlite3.Connection, t0: datetime | None = None) -> Non
             "descripcion": "Mainboards control residencial — lote de reposición",
             "sku": "MB-RES-REP",
             "cantidad": 320,
-            "proveedor_01": "Shenzhen Electronics Co.",
-            "proveedor_02": "Dongguan Assembly Ltd.",
-            "invoice_nombre": "INV-SE-9102.pdf",
+            "proveedor_01": PROVEEDOR_QZ,
+            "proveedor_02": PROVEEDOR_JLC,
+            "orden_general_nombre": "OG-ERP-9102.pdf",
+            "po_nombre": "PO-QZ-9102.pdf",
             "slack_link": "https://slack.com/archives/C01COMPRAS/p1726000004",
+            "invoice_p01_nombre": "INV-QZ-9102.pdf",
             "fecha_inicio": fmt_dt(inicio_004),
-            "etapa": ETAPA_PRODUCCION,
+            "etapa": ETAPA_PAGO_INVOICE_P01,
             "created_at": fmt_dt(inicio_004),
-            "invoice_paid_at": fmt_dt(pago_004),
-            "created_by": ROL_COMPRAS,
+            "orden_bom_at": fmt_dt(orden_004),
+            "created_by": ROL_SOLICITUD,
         },
         [
-            (ROL_COMPRAS, "Orden creada", "Cotización INV-SE-9102.pdf adjunta", inicio_004),
+            (ROL_SOLICITUD, "Solicitud creada", "OG-ERP-9102.pdf", inicio_004),
             (
-                ROL_FINANZAS,
-                "Invoice pagado",
-                "SLA 2 días cumplido. Pendiente confirmación de Compras (SLA 3 días)",
-                pago_004,
+                ROL_LOGISTICA,
+                "Orden BOM generada",
+                "PO-QZ-9102.pdf · pendiente pago invoice P01 (SLA 2 días)",
+                orden_004,
             ),
         ],
     )
-
-
-def _ensure_seed_order_004(conn: sqlite3.Connection) -> None:
-    row = conn.execute(
-        "SELECT 1 FROM orders WHERE bom_code = ?",
-        ("BOM-2026-004",),
-    ).fetchone()
-    if row is None:
-        _seed_order_004(conn)
 
 
 def fetch_orders() -> list[dict]:
@@ -505,7 +570,7 @@ def add_event(order_id: int, actor: str, accion: str, detalle: str, cuando: date
 
 
 def apply_automatic_transitions(ahora: datetime) -> list[str]:
-    """Avanza etapas automáticas (tránsito 12d y entrega a taller 2d)."""
+    """Avanza tránsito P01→P02 (4d) y llegada a aduanas tras envío (7d)."""
     avisos: list[str] = []
     for order in fetch_orders():
         etapa = order["etapa"]
@@ -515,82 +580,53 @@ def apply_automatic_transitions(ahora: datetime) -> list[str]:
                 update_order(
                     order["id"],
                     {
-                        "etapa": ETAPA_ENSAMBLADO,
+                        "etapa": ETAPA_PAGO_INVOICE_P02,
                         "llego_p2_at": order["llego_p2_at"] or fmt_dt(ahora),
                     },
                 )
                 add_event(
                     order["id"],
                     "sistema",
-                    "Llegada a Proveedor 02",
-                    "Tránsito automático de 12 días completado. Pendiente marcar ingreso a ensamblado.",
+                    "Llegada a Proveedor 02 (JLC)",
+                    "Tránsito automático de 4 días completado. Pendiente pago de invoice P02.",
                     ahora,
                 )
-                avisos.append(f"{order['bom_code']}: llegó a Proveedor 02")
+                avisos.append(f"{order['bom_code']}: llegó a P02 (JLC)")
 
-        if etapa == ETAPA_ARANCELES and order["aranceles_paid_at"]:
-            pago = parse_dt(order["aranceles_paid_at"])
-            if pago and dias_entre(pago, ahora) >= DURACION_TALLER:
+        if etapa == ETAPA_ENVIO_PERU and order["envio_at"]:
+            inicio = parse_dt(order["envio_at"])
+            if inicio and dias_entre(inicio, ahora) >= DURACION_ENVIO:
                 update_order(
                     order["id"],
-                    {"etapa": ETAPA_TALLER, "taller_at": fmt_dt(ahora)},
+                    {
+                        "etapa": ETAPA_ADUANAS,
+                        "aduanas_at": order["aduanas_at"] or fmt_dt(ahora),
+                    },
                 )
                 add_event(
                     order["id"],
                     "sistema",
-                    "Entrega en taller Lima",
-                    "2 días después del pago de aranceles. Listo para integración.",
+                    "Carga en aduanas Lima",
+                    "Tránsito de 7 días completado. Pendiente pago de aranceles (SLA 7 días).",
                     ahora,
                 )
-                avisos.append(f"{order['bom_code']}: entregado en taller")
+                avisos.append(f"{order['bom_code']}: llegó a aduanas Lima")
     return avisos
 
 
-def sla_invoice(order: dict, ahora: datetime) -> dict | None:
-    if order["etapa"] != ETAPA_PAGO_INVOICE:
-        return None
-    inicio = parse_dt(order["created_at"])
+def _sla_from(
+    tipo: str,
+    inicio: datetime | None,
+    dias: float,
+    ahora: datetime,
+) -> dict | None:
     if inicio is None:
         return None
-    limite = inicio + timedelta(days=SLA_INVOICE_DIAS)
+    limite = inicio + timedelta(days=dias)
     restante = dias_entre(ahora, limite)
     return {
-        "tipo": "Invoice",
-        "horas_restantes": restante * 24 if restante is not None else 0,
-        "dias_restantes": restante,
-        "vencido": ahora > limite,
-        "limite": limite,
-    }
-
-
-def sla_produccion(order: dict, ahora: datetime) -> dict | None:
-    if order["etapa"] != ETAPA_PRODUCCION:
-        return None
-    inicio = parse_dt(order["invoice_paid_at"]) or parse_dt(order["created_at"])
-    if inicio is None:
-        return None
-    limite = inicio + timedelta(days=SLA_PRODUCCION_DIAS)
-    restante = dias_entre(ahora, limite)
-    return {
-        "tipo": "Producción P01",
-        "horas_restantes": restante * 24 if restante is not None else 0,
-        "dias_restantes": restante,
-        "vencido": ahora > limite,
-        "limite": limite,
-    }
-
-
-def sla_aranceles(order: dict, ahora: datetime) -> dict | None:
-    if order["etapa"] != ETAPA_ADUANAS:
-        return None
-    inicio = parse_dt(order["aduanas_at"])
-    if inicio is None:
-        return None
-    limite = inicio + timedelta(days=SLA_ARANCELES_DIAS)
-    restante = dias_entre(ahora, limite)
-    return {
-        "tipo": "Aranceles",
-        "horas_restantes": restante * 24 if restante is not None else 0,
+        "tipo": tipo,
+        "horas_restantes": (restante or 0) * 24,
         "dias_restantes": restante,
         "vencido": ahora > limite,
         "limite": limite,
@@ -598,7 +634,72 @@ def sla_aranceles(order: dict, ahora: datetime) -> dict | None:
 
 
 def sla_activo(order: dict, ahora: datetime) -> dict | None:
-    return sla_invoice(order, ahora) or sla_produccion(order, ahora) or sla_aranceles(order, ahora)
+    etapa = order["etapa"]
+
+    if etapa == ETAPA_ORDEN_BOM:
+        return _sla_from(
+            "Orden BOM",
+            parse_dt(order["created_at"]),
+            SLA_ORDEN_BOM_DIAS,
+            ahora,
+        )
+    if etapa == ETAPA_PAGO_INVOICE_P01:
+        return _sla_from(
+            "Invoice P01",
+            parse_dt(order["orden_bom_at"]) or parse_dt(order["created_at"]),
+            SLA_INVOICE_P01_DIAS,
+            ahora,
+        )
+    if etapa == ETAPA_ACOPIO_P01:
+        return _sla_from(
+            "Acopio P01",
+            parse_dt(order["invoice_p01_paid_at"]),
+            SLA_ACOPIO_DIAS,
+            ahora,
+        )
+    if etapa == ETAPA_PAGO_INVOICE_P02:
+        return _sla_from(
+            "Invoice P02",
+            parse_dt(order["llego_p2_at"]) or parse_dt(order["transito_p2_at"]),
+            SLA_INVOICE_P02_DIAS,
+            ahora,
+        )
+    if etapa == ETAPA_PRODUCCION_P02 and not order["produccion_at"]:
+        return _sla_from(
+            "Producción P02",
+            parse_dt(order["invoice_p02_paid_at"]),
+            SLA_PRODUCCION_DIAS,
+            ahora,
+        )
+    if etapa == ETAPA_PRODUCCION_P02 and order["produccion_at"]:
+        return _sla_from(
+            "Envío a Perú",
+            parse_dt(order["produccion_at"]),
+            SLA_ENVIO_DIAS,
+            ahora,
+        )
+    if etapa == ETAPA_ENVIO_PERU and not order["envio_at"]:
+        return _sla_from(
+            "Envío a Perú",
+            parse_dt(order["produccion_at"]),
+            SLA_ENVIO_DIAS,
+            ahora,
+        )
+    if etapa == ETAPA_ADUANAS:
+        return _sla_from(
+            "Aranceles",
+            parse_dt(order["aduanas_at"]),
+            SLA_ARANCELES_DIAS,
+            ahora,
+        )
+    if etapa == ETAPA_TALLER and not order["taller_at"]:
+        return _sla_from(
+            "Recepción taller",
+            parse_dt(order["aranceles_paid_at"]),
+            SLA_TALLER_DIAS,
+            ahora,
+        )
+    return None
 
 
 def conteo_fase(order: dict, ahora: datetime) -> str | None:
@@ -606,20 +707,25 @@ def conteo_fase(order: dict, ahora: datetime) -> str | None:
     if etapa == ETAPA_TRANSITO_P2 and order["transito_p2_at"]:
         transcurridos = dias_entre(parse_dt(order["transito_p2_at"]), ahora) or 0
         resto = max(0, DURACION_TRANSITO_P2 - transcurridos)
-        return f"Tránsito a P02 · día {min(int(transcurridos) + 1, DURACION_TRANSITO_P2)} de {DURACION_TRANSITO_P2} · restan {resto:.1f} d"
-    if etapa == ETAPA_ENSAMBLADO and order["ensamblado_at"]:
-        transcurridos = dias_entre(parse_dt(order["ensamblado_at"]), ahora) or 0
-        resto = max(0, DURACION_ENSAMBLADO - transcurridos)
-        return f"Ensamblado · día {min(int(transcurridos) + 1, DURACION_ENSAMBLADO)} de {DURACION_ENSAMBLADO} · restan {resto:.1f} d"
-    if etapa == ETAPA_ENVIO and order["envio_at"]:
+        return (
+            f"Tránsito a P02 · día {min(int(transcurridos) + 1, DURACION_TRANSITO_P2)} "
+            f"de {DURACION_TRANSITO_P2} · restan {resto:.1f} d"
+        )
+    if etapa == ETAPA_PRODUCCION_P02 and order["produccion_at"]:
+        transcurridos = dias_entre(parse_dt(order["produccion_at"]), ahora) or 0
+        resto = max(0, DURACION_PRODUCCION_P02 - transcurridos)
+        return (
+            f"Producción JLC · día {min(int(transcurridos) + 1, DURACION_PRODUCCION_P02)} "
+            f"de {DURACION_PRODUCCION_P02} · restan {resto:.1f} d"
+        )
+    if etapa == ETAPA_ENVIO_PERU and order["envio_at"]:
         transcurridos = dias_entre(parse_dt(order["envio_at"]), ahora) or 0
         resto = max(0, DURACION_ENVIO - transcurridos)
         estado = "llegada estimada cumplida" if resto == 0 else f"restan {resto:.1f} d"
-        return f"Tránsito a Perú · día {min(int(transcurridos) + 1, DURACION_ENVIO)} de {DURACION_ENVIO} · {estado}"
-    if etapa == ETAPA_ARANCELES and order["aranceles_paid_at"]:
-        transcurridos = dias_entre(parse_dt(order["aranceles_paid_at"]), ahora) or 0
-        resto = max(0, DURACION_TALLER - transcurridos)
-        return f"Traslado a taller · restan {resto:.1f} d"
+        return (
+            f"Tránsito a Perú · día {min(int(transcurridos) + 1, DURACION_ENVIO)} "
+            f"de {DURACION_ENVIO} · {estado}"
+        )
     return None
 
 
@@ -631,107 +737,183 @@ def puede_actuar(rol: str, order: dict) -> bool:
     if rol not in ROLES_VALIDOS:
         return False
     etapa = order["etapa"]
+    if rol == ROL_SOLICITUD:
+        return False  # solo crea solicitudes en el tab Alta
+    if rol == ROL_LOGISTICA:
+        if etapa == ETAPA_ORDEN_BOM:
+            return True
+        if etapa == ETAPA_ACOPIO_P01:
+            return True
+        if etapa == ETAPA_PRODUCCION_P02:
+            return True
+        return False
     if rol == ROL_FINANZAS:
-        return etapa in {ETAPA_PAGO_INVOICE, ETAPA_ADUANAS}
-    if rol == ROL_COMPRAS:
-        return etapa in {ETAPA_PRODUCCION, ETAPA_ENSAMBLADO}
-    if rol == ROL_ADUANAS:
-        return etapa == ETAPA_ENVIO
+        return etapa in {
+            ETAPA_PAGO_INVOICE_P01,
+            ETAPA_PAGO_INVOICE_P02,
+            ETAPA_ADUANAS,
+        }
+    if rol == ROL_TALLER:
+        return etapa == ETAPA_TALLER and not order["taller_at"]
     return False
 
 
-def avanzar_etapa(order: dict, rol: str, ahora: datetime, accion: str) -> str:
+def avanzar_etapa(
+    order: dict,
+    rol: str,
+    ahora: datetime,
+    accion: str,
+    adjunto: str | None = None,
+) -> str:
     if rol not in ROLES_VALIDOS:
         return "Rol no autorizado."
 
     oid = order["id"]
     etapa = order["etapa"]
 
-    if accion == "pagar_invoice":
-        if rol != ROL_FINANZAS or etapa != ETAPA_PAGO_INVOICE:
-            return "Esta acción corresponde a Finanzas en la etapa de invoice."
-        update_order(
+    if accion == "generar_orden_bom":
+        if rol != ROL_LOGISTICA or etapa != ETAPA_ORDEN_BOM:
+            return "Esta acción corresponde a Adrián en la etapa de Orden BOM."
+        fields = {
+            "etapa": ETAPA_PAGO_INVOICE_P01,
+            "orden_bom_at": fmt_dt(ahora),
+        }
+        if adjunto:
+            if adjunto.startswith("http"):
+                fields["slack_link"] = adjunto
+            else:
+                fields["po_nombre"] = adjunto
+        update_order(oid, fields)
+        add_event(
             oid,
-            {"etapa": ETAPA_PRODUCCION, "invoice_paid_at": fmt_dt(ahora)},
+            rol,
+            "Orden BOM generada",
+            f"Documento: {adjunto or '—'}. Pendiente pago invoice P01 (SLA 2 días).",
+            ahora,
         )
-        add_event(oid, rol, "Invoice pagado", "Casilla Invoice pagado registrada", ahora)
-        return (
-            "Invoice marcado como pagado. Compras tiene 3 días de SLA "
-            "para confirmar pedido registrado / en producción."
-        )
+        return "Orden BOM registrada. Finanzas tiene 2 días de SLA para pagar el invoice P01."
 
-    if accion == "iniciar_produccion":
-        if rol != ROL_COMPRAS or etapa != ETAPA_PRODUCCION:
-            return "Esta acción corresponde a Compras al confirmar el Proveedor 01."
+    if accion == "pagar_invoice_p01":
+        if rol != ROL_FINANZAS or etapa != ETAPA_PAGO_INVOICE_P01:
+            return "Esta acción corresponde a Julio en el pago de invoice P01."
+        fields = {
+            "etapa": ETAPA_ACOPIO_P01,
+            "invoice_p01_paid_at": fmt_dt(ahora),
+        }
+        if adjunto:
+            fields["comprobante_p01_nombre"] = adjunto
+        update_order(oid, fields)
+        add_event(
+            oid,
+            rol,
+            "Invoice P01 pagado",
+            f"Comprobante: {adjunto or '—'}. Pendiente acopio QZ (SLA 2 días).",
+            ahora,
+        )
+        return "Invoice P01 pagado. Adrián tiene 2 días de SLA para confirmar acopio en QZ."
+
+    if accion == "marcar_acopio":
+        if rol != ROL_LOGISTICA or etapa != ETAPA_ACOPIO_P01:
+            return "Esta acción corresponde a Adrián en acopio P01 (QZ)."
         update_order(
             oid,
             {
                 "etapa": ETAPA_TRANSITO_P2,
-                "produccion_at": fmt_dt(ahora),
+                "acopio_at": fmt_dt(ahora),
                 "transito_p2_at": fmt_dt(ahora),
             },
         )
         add_event(
             oid,
             rol,
-            "Pedido registrado / en producción",
-            "Inicia conteo de 12 días hacia Proveedor 02",
+            "Pedido registrado / en acopio",
+            "Inicia tránsito automático de 4 días hacia JLC (P02).",
             ahora,
         )
-        return "Producción confirmada. Inicia tránsito automático de 12 días a Proveedor 02."
+        return "Acopio QZ confirmado. Inicia tránsito automático de 4 días a P02 (JLC)."
 
-    if accion == "ingreso_ensamblado":
-        if rol != ROL_COMPRAS or etapa != ETAPA_ENSAMBLADO:
-            return "Marque ingreso a ensamblado cuando la carga ya esté en Proveedor 02."
-        if order["ensamblado_at"]:
-            return "El ensamblado ya fue registrado."
-        update_order(oid, {"ensamblado_at": fmt_dt(ahora)})
-        add_event(oid, rol, "Ingreso a ensamblado", "Fase de 13 días de producción", ahora)
-        return "Ingreso a ensamblado registrado (fase estimada de 13 días)."
-
-    if accion == "enviar_peru":
-        if rol != ROL_COMPRAS or etapa != ETAPA_ENSAMBLADO:
-            return "El despacho lo registra Compras durante el ensamblado."
-        if not order["ensamblado_at"]:
-            return "Primero registre el ingreso a ensamblado."
-        update_order(oid, {"etapa": ETAPA_ENVIO, "envio_at": fmt_dt(ahora)})
+    if accion == "pagar_invoice_p02":
+        if rol != ROL_FINANZAS or etapa != ETAPA_PAGO_INVOICE_P02:
+            return "Esta acción corresponde a Julio en el pago de invoice P02."
+        fields = {
+            "etapa": ETAPA_PRODUCCION_P02,
+            "invoice_p02_paid_at": fmt_dt(ahora),
+        }
+        if adjunto:
+            fields["comprobante_p02_nombre"] = adjunto
+        update_order(oid, fields)
         add_event(
             oid,
             rol,
-            "Mainboards en envío internacional",
-            "Tránsito estimado de 7 días a aduanas Lima",
+            "Invoice P02 pagado",
+            f"Comprobante: {adjunto or '—'}. Pendiente marcar producción JLC (SLA 2 días).",
+            ahora,
+        )
+        return "Invoice P02 pagado. Adrián tiene 2 días de SLA para marcar producción en JLC."
+
+    if accion == "marcar_produccion":
+        if rol != ROL_LOGISTICA or etapa != ETAPA_PRODUCCION_P02:
+            return "Esta acción corresponde a Adrián en producción P02 (JLC)."
+        if order["produccion_at"]:
+            return "La producción ya fue registrada."
+        update_order(oid, {"produccion_at": fmt_dt(ahora)})
+        add_event(
+            oid,
+            rol,
+            "En producción P02",
+            "Fase estimada de 21 días. Luego marcar tránsito a Perú (SLA 21 días).",
+            ahora,
+        )
+        return "Producción JLC registrada. Fase estimada de 21 días en sistema."
+
+    if accion == "enviar_peru":
+        if rol != ROL_LOGISTICA or etapa != ETAPA_PRODUCCION_P02:
+            return "El despacho lo registra Adrián durante la producción P02."
+        if not order["produccion_at"]:
+            return "Primero marque 'en Producción'."
+        update_order(oid, {"etapa": ETAPA_ENVIO_PERU, "envio_at": fmt_dt(ahora)})
+        add_event(
+            oid,
+            rol,
+            "Tránsito a Perú",
+            "Tránsito estimado de 7 días hasta aduanas Lima.",
             ahora,
         )
         return "Despacho registrado. 7 días estimados hasta aduanas Lima."
 
-    if accion == "marcar_aduanas":
-        if rol != ROL_ADUANAS or etapa != ETAPA_ENVIO:
-            return "Solo Operaciones / Aduanas puede marcar la llegada a Lima."
-        update_order(oid, {"etapa": ETAPA_ADUANAS, "aduanas_at": fmt_dt(ahora)})
-        add_event(
-            oid,
-            rol,
-            "Carga en aduanas",
-            "Notificación a Finanzas: pago de aranceles requerido (SLA 24 h)",
-            ahora,
-        )
-        return "Carga en aduanas. Finanzas tiene un SLA de 24 h para aranceles."
-
     if accion == "pagar_aranceles":
         if rol != ROL_FINANZAS or etapa != ETAPA_ADUANAS:
-            return "El pago de aranceles corresponde a Finanzas con carga en aduanas."
-        update_order(
-            oid,
-            {"etapa": ETAPA_ARANCELES, "aranceles_paid_at": fmt_dt(ahora)},
-        )
+            return "El pago de aranceles corresponde a Julio con carga en aduanas."
+        fields = {
+            "etapa": ETAPA_TALLER,
+            "aranceles_paid_at": fmt_dt(ahora),
+        }
+        if adjunto:
+            fields["comprobante_aranceles_nombre"] = adjunto
+        update_order(oid, fields)
         add_event(
             oid,
             rol,
             "Aranceles pagados",
-            "En 2 días la carga pasa automáticamente a taller Lima",
+            f"Comprobante aranceles/DHL: {adjunto or '—'}. Pendiente recepción en taller (SLA 1 día).",
             ahora,
         )
-        return "Aranceles pagados. Entrega automática a taller en 2 días."
+        return "Aranceles pagados. Lucho tiene 1 día de SLA para confirmar recepción en taller."
+
+    if accion == "recibir_taller":
+        if rol != ROL_TALLER or etapa != ETAPA_TALLER:
+            return "La recepción la confirma Lucho en taller Lima."
+        if order["taller_at"]:
+            return "La recepción ya fue registrada."
+        update_order(oid, {"taller_at": fmt_dt(ahora)})
+        add_event(
+            oid,
+            rol,
+            "Recepción en taller",
+            "Carga recibida en taller Lima · lista para integración.",
+            ahora,
+        )
+        return "Recepción confirmada. Carga lista para integración en taller Lima."
 
     return "Acción no reconocida."
 
@@ -746,6 +928,8 @@ def orders_frame(orders: list[dict], ahora: datetime) -> pd.DataFrame:
     for order in orders:
         sla = sla_activo(order, ahora)
         etapa_meta = ETAPAS[order["etapa"]]
+        completada = bool(order["taller_at"]) and order["etapa"] == ETAPA_TALLER
+        progreso = 1.0 if completada else etapa_meta["orden"] / TOTAL_ETAPAS
         rows.append(
             {
                 "BOM": order["bom_code"],
@@ -756,18 +940,17 @@ def orders_frame(orders: list[dict], ahora: datetime) -> pd.DataFrame:
                 "Proveedor 02": order["proveedor_02"],
                 "Etapa": etapa_meta["nombre"],
                 "Región": etapa_meta["region"],
-                "Progreso": etapa_meta["orden"] / TOTAL_ETAPAS,
+                "Progreso": progreso,
                 "Fecha inicio": parse_dt(order["fecha_inicio"]),
                 "SLA": (
                     "Vencido"
                     if sla and sla["vencido"]
-                    else (
-                        f"{sla['dias_restantes']:.1f} d"
-                        if sla
-                        else "—"
-                    )
+                    else (f"{sla['dias_restantes']:.1f} d" if sla else "—")
                 ),
-                "Invoice / Slack": order["invoice_nombre"] or order["slack_link"] or "—",
+                "Docs": order["po_nombre"]
+                or order["orden_general_nombre"]
+                or order["slack_link"]
+                or "—",
             }
         )
     return pd.DataFrame(rows)
@@ -776,24 +959,28 @@ def orders_frame(orders: list[dict], ahora: datetime) -> pd.DataFrame:
 def kpis(orders: list[dict], ahora: datetime) -> dict[str, int]:
     return {
         "total": len(orders),
+        "lima": sum(1 for o in orders if region_de(o) == "lima"),
         "china": sum(1 for o in orders if region_de(o) == "china"),
         "transito": sum(1 for o in orders if region_de(o) == "transito"),
         "aduanas": sum(1 for o in orders if region_de(o) == "aduanas"),
-        "taller": sum(1 for o in orders if region_de(o) == "taller"),
+        "taller": sum(
+            1 for o in orders if region_de(o) == "taller" and o.get("taller_at")
+        ),
         "sla": sum(1 for o in orders if (s := sla_activo(o, ahora)) and s["vencido"]),
     }
 
 
 def build_gantt(orders: list[dict], ahora: datetime) -> pd.DataFrame:
-    """Ciclo de vida planificado / real de cada BOM para el timeline."""
     plan = [
-        ("Pago de invoice", "created_at", "invoice_paid_at", SLA_INVOICE_DIAS, ETAPA_PAGO_INVOICE),
-        ("Producción P01", "invoice_paid_at", "produccion_at", SLA_PRODUCCION_DIAS, ETAPA_PRODUCCION),
+        ("Orden BOM PCB", "created_at", "orden_bom_at", SLA_ORDEN_BOM_DIAS, ETAPA_ORDEN_BOM),
+        ("Pago invoice P01", "orden_bom_at", "invoice_p01_paid_at", SLA_INVOICE_P01_DIAS, ETAPA_PAGO_INVOICE_P01),
+        ("Acopio P01 (QZ)", "invoice_p01_paid_at", "acopio_at", SLA_ACOPIO_DIAS, ETAPA_ACOPIO_P01),
         ("Tránsito a P02", "transito_p2_at", "llego_p2_at", DURACION_TRANSITO_P2, ETAPA_TRANSITO_P2),
-        ("Ensamblado P02", "ensamblado_at", "envio_at", DURACION_ENSAMBLADO, ETAPA_ENSAMBLADO),
-        ("Envío a Perú", "envio_at", "aduanas_at", DURACION_ENVIO, ETAPA_ENVIO),
+        ("Pago invoice P02", "llego_p2_at", "invoice_p02_paid_at", SLA_INVOICE_P02_DIAS, ETAPA_PAGO_INVOICE_P02),
+        ("Producción P02 (JLC)", "produccion_at", "envio_at", DURACION_PRODUCCION_P02, ETAPA_PRODUCCION_P02),
+        ("Envío a Perú", "envio_at", "aduanas_at", DURACION_ENVIO, ETAPA_ENVIO_PERU),
         ("Aduanas / aranceles", "aduanas_at", "aranceles_paid_at", SLA_ARANCELES_DIAS, ETAPA_ADUANAS),
-        ("Entrega a taller", "aranceles_paid_at", "taller_at", DURACION_TALLER, ETAPA_ARANCELES),
+        ("Recepción taller", "aranceles_paid_at", "taller_at", SLA_TALLER_DIAS, ETAPA_TALLER),
     ]
     rows: list[dict] = []
     for order in orders:
@@ -808,8 +995,6 @@ def build_gantt(orders: list[dict], ahora: datetime) -> pd.DataFrame:
                 end = start + timedelta(days=duracion)
                 estado = "Planificada"
             elif end is None:
-                # Conservar la duración SLA/estimada (p. ej. 3 días de P01)
-                # aunque la confirmación aún no ocurra. Si ya venció, alargar hasta hoy.
                 planned_end = start + timedelta(days=duracion)
                 end = max(planned_end, ahora) if ahora >= start else planned_end
                 estado = "En curso"
@@ -857,18 +1042,30 @@ def gantt_chart(gantt_df: pd.DataFrame, ahora: datetime) -> go.Figure:
         color="Fase",
         color_discrete_map=COLORES_FASE,
         hover_data=["Estado", "Fase"],
-        title="Ciclo de vida China → Lima",
+        title="Ciclo de vida China → Lima (10 etapas)",
     )
     fig.update_yaxes(autorange="reversed", title="")
     fig.update_xaxes(title="Fecha operativa")
     fig.update_traces(marker_line_width=0)
-    fig.add_vline(
+    # add_vline + datetime falla en Plotly al calcular la anotación;
+    # usamos shape + annotation explícitos.
+    fig.add_shape(
+        type="line",
+        x0=ahora,
+        x1=ahora,
+        y0=0,
+        y1=1,
+        xref="x",
+        yref="paper",
+        line=dict(width=1.5, dash="dot", color="#B45309"),
+    )
+    fig.add_annotation(
         x=ahora,
-        line_width=1.5,
-        line_dash="dot",
-        line_color="#B45309",
-        annotation_text="Hoy",
-        annotation_position="top",
+        y=1.02,
+        yref="paper",
+        text="Hoy",
+        showarrow=False,
+        font=dict(color="#B45309", size=12),
     )
     return style_plotly(fig)
 
@@ -885,12 +1082,20 @@ def donut_chart(orders: list[dict]) -> go.Figure:
         .reset_index()
     )
     counts.columns = ["Fase", "Órdenes"]
+    palette = [
+        "#64748B",
+        "#0F766E",
+        "#B45309",
+        "#0F6E6B",
+        "#0E7490",
+        "#C2410C",
+        "#1D4E89",
+        "#C45C26",
+        "#7C3AED",
+        "#15803D",
+    ]
     color_map = {
-        ETAPAS[k]["nombre"]: color
-        for k, color in zip(
-            ETAPAS,
-            ["#B45309", "#0F6E6B", "#0E7490", "#1D4E89", "#C45C26", "#7C3AED", "#A78BFA", "#15803D"],
-        )
+        ETAPAS[k]["nombre"]: color for k, color in zip(ETAPAS, palette)
     }
     fig = go.Figure(
         data=[
@@ -912,7 +1117,13 @@ def donut_chart(orders: list[dict]) -> go.Figure:
 
 
 def bar_chart(orders: list[dict]) -> go.Figure:
-    regiones = {"china": "En China", "transito": "En tránsito a Perú", "aduanas": "En aduanas", "taller": "En taller"}
+    regiones = {
+        "lima": "En Lima (solicitud/BOM)",
+        "china": "En China",
+        "transito": "En tránsito a Perú",
+        "aduanas": "En aduanas",
+        "taller": "En taller",
+    }
     data = (
         pd.Series([regiones[region_de(o)] for o in orders])
         .value_counts()
@@ -925,7 +1136,7 @@ def bar_chart(orders: list[dict]) -> go.Figure:
         x="Ubicación",
         y="Órdenes",
         color="Ubicación",
-        color_discrete_sequence=["#0F6E6B", "#C45C26", "#7C3AED", "#15803D"],
+        color_discrete_sequence=["#64748B", "#0F6E6B", "#C45C26", "#7C3AED", "#15803D"],
         title="Inventario de órdenes por ubicación",
     )
     fig.update_layout(showlegend=False)
@@ -938,18 +1149,19 @@ def bar_chart(orders: list[dict]) -> go.Figure:
 # ---------------------------------------------------------------------------
 
 
-def guardar_pdf(uploaded, bom_code: str) -> str | None:
+def guardar_pdf(uploaded, bom_code: str, prefijo: str = "") -> str | None:
     if uploaded is None:
         return None
-    safe_name = f"{bom_code}_{uploaded.name}".replace(" ", "_")
+    prefix = f"{prefijo}_" if prefijo else ""
+    safe_name = f"{bom_code}_{prefix}{uploaded.name}".replace(" ", "_")
     destino = UPLOAD_DIR / safe_name
     destino.write_bytes(uploaded.getbuffer())
     return safe_name
 
 
-def crear_orden(form: dict, ahora: datetime) -> str:
+def crear_solicitud(form: dict, ahora: datetime) -> str:
     bom = next_bom_code()
-    invoice_nombre = guardar_pdf(form["pdf"], bom)
+    orden_general = guardar_pdf(form["pdf"], bom, "OG")
     payload = {
         "bom_code": bom,
         "descripcion": form["descripcion"].strip(),
@@ -957,12 +1169,11 @@ def crear_orden(form: dict, ahora: datetime) -> str:
         "cantidad": int(form["cantidad"]),
         "proveedor_01": form["proveedor_01"],
         "proveedor_02": form["proveedor_02"],
-        "invoice_nombre": invoice_nombre,
-        "slack_link": form["slack_link"].strip() or None,
+        "orden_general_nombre": orden_general,
         "fecha_inicio": fmt_dt(datetime.combine(form["fecha_inicio"], ahora.time())),
-        "etapa": ETAPA_PAGO_INVOICE,
+        "etapa": ETAPA_ORDEN_BOM,
         "created_at": fmt_dt(ahora),
-        "created_by": ROL_COMPRAS,
+        "created_by": ROL_SOLICITUD,
     }
     with get_conn() as conn:
         _insert_order(
@@ -970,9 +1181,10 @@ def crear_orden(form: dict, ahora: datetime) -> str:
             payload,
             [
                 (
-                    ROL_COMPRAS,
-                    "Orden creada",
-                    f"Invoice: {invoice_nombre or 'sin PDF'} · Slack: {payload['slack_link'] or '—'}",
+                    ROL_SOLICITUD,
+                    "Solicitud creada",
+                    f"Orden General: {orden_general or 'sin PDF'}. "
+                    "Pendiente Orden BOM (SLA 4 días).",
                     ahora,
                 )
             ],
@@ -1017,39 +1229,40 @@ def render_sidebar() -> str:
                 st.session_state.sim_days = 0
                 st.rerun()
         st.caption(
-            "Usa el avance de día para disparar el tránsito de 12 días "
-            "y la entrega automática al taller (2 días post-aranceles)."
+            "Usa el avance de día para disparar el tránsito QZ→JLC (4 días) "
+            "y la llegada a aduanas tras el envío (7 días)."
         )
 
         with st.expander("Datos de demostración", icon=":material/database:"):
             st.caption(
-                "Cuatro BOM de prueba: invoice, producción P01, ensamblado y envío a Perú."
+                "Cuatro BOM de prueba en etapas distintas del proceso de 10 pasos."
             )
             if st.button("Restablecer demo", icon=":material/restart_alt:"):
                 reset_demo()
                 st.toast("Demo restablecida", icon=":material/check:")
                 st.rerun()
 
-        st.caption("Metta Dashboard · MVP trazabilidad v0.1")
+        st.caption("Metta Dashboard · MVP trazabilidad v0.2 · 10 etapas")
     return rol
 
 
 def render_kpis(metrics: dict[str, int]) -> None:
     with st.container(horizontal=True):
         st.metric("Total de órdenes", metrics["total"], border=True)
+        st.metric("Solicitud / BOM (Lima)", metrics["lima"], border=True)
         st.metric("Órdenes en China", metrics["china"], border=True)
-        st.metric("En tránsito a Perú", metrics["transito"], border=True)
     with st.container(horizontal=True):
+        st.metric("En tránsito a Perú", metrics["transito"], border=True)
         st.metric("En aduanas", metrics["aduanas"], border=True)
         st.metric("Completadas en taller", metrics["taller"], border=True)
-        sla_delta = "Sin alertas" if metrics["sla"] == 0 else f"{metrics['sla']} vencidas"
-        st.metric(
-            "Alertas de SLA vencido",
-            metrics["sla"],
-            delta=sla_delta,
-            delta_color="off" if metrics["sla"] == 0 else "inverse",
-            border=True,
-        )
+    sla_delta = "Sin alertas" if metrics["sla"] == 0 else f"{metrics['sla']} vencidas"
+    st.metric(
+        "Alertas de SLA vencido",
+        metrics["sla"],
+        delta=sla_delta,
+        delta_color="off" if metrics["sla"] == 0 else "inverse",
+        border=True,
+    )
 
 
 def render_dashboard(orders: list[dict], ahora: datetime) -> None:
@@ -1098,14 +1311,14 @@ def render_dashboard(orders: list[dict], ahora: datetime) -> None:
                     format="D MMM YYYY",
                 ),
                 "Cantidad": st.column_config.NumberColumn("Cantidad", format="%d"),
-                "Invoice / Slack": st.column_config.TextColumn("Invoice / Slack"),
+                "Docs": st.column_config.TextColumn("Docs"),
             },
         )
 
 
 def _sla_markdown(sla: dict) -> None:
     if sla["vencido"]:
-        demora = abs(sla["dias_restantes"])
+        demora = abs(sla["dias_restantes"] or 0)
         st.markdown(
             f":red[**SLA {sla['tipo']} vencido** · {demora:.1f} días / "
             f"{abs(sla['horas_restantes']):.0f} h de retraso]"
@@ -1121,6 +1334,7 @@ def render_order_card(order: dict, rol: str, ahora: datetime) -> None:
     etapa_meta = ETAPAS[order["etapa"]]
     sla = sla_activo(order, ahora)
     badge_color = {
+        "lima": "gray",
         "china": "blue",
         "transito": "orange",
         "aduanas": "violet",
@@ -1141,16 +1355,24 @@ def render_order_card(order: dict, rol: str, ahora: datetime) -> None:
             st.badge(etapa_meta["nombre"], color=badge_color)
 
         meta1, meta2, meta3 = st.columns(3)
-        meta1.markdown(f"**Proveedor 01**  \n{order['proveedor_01']}")
-        meta2.markdown(f"**Proveedor 02**  \n{order['proveedor_02']}")
+        meta1.markdown(f"**Proveedor 01 (QZ)**  \n{order['proveedor_01']}")
+        meta2.markdown(f"**Proveedor 02 (JLC)**  \n{order['proveedor_02']}")
         meta3.markdown(f"**Cantidad**  \n{order['cantidad']} · {order['sku'] or 's/SKU'}")
 
-        if order["invoice_nombre"] or order["slack_link"]:
-            refs = []
-            if order["invoice_nombre"]:
-                refs.append(f"PDF: `{order['invoice_nombre']}`")
-            if order["slack_link"]:
-                refs.append(f"[Hilo Slack]({order['slack_link']})")
+        refs = []
+        if order.get("orden_general_nombre"):
+            refs.append(f"OG: `{order['orden_general_nombre']}`")
+        if order.get("po_nombre"):
+            refs.append(f"PO: `{order['po_nombre']}`")
+        if order.get("slack_link"):
+            refs.append(f"[Hilo Slack]({order['slack_link']})")
+        if order.get("comprobante_p01_nombre"):
+            refs.append(f"Pago P01: `{order['comprobante_p01_nombre']}`")
+        if order.get("comprobante_p02_nombre"):
+            refs.append(f"Pago P02: `{order['comprobante_p02_nombre']}`")
+        if order.get("comprobante_aranceles_nombre"):
+            refs.append(f"Aranceles: `{order['comprobante_aranceles_nombre']}`")
+        if refs:
             st.caption(" · ".join(refs))
 
         st.caption(etapa_meta["detalle"])
@@ -1185,109 +1407,191 @@ def _render_acciones(order: dict, rol: str, ahora: datetime) -> None:
     etapa = order["etapa"]
     oid = order["id"]
 
-    if etapa == ETAPA_TALLER:
-        st.success("Carga en taller Lima · lista para integración.", icon=":material/factory:")
+    if etapa == ETAPA_TALLER and order["taller_at"]:
+        st.success(
+            "Carga recibida en taller Lima · lista para integración.",
+            icon=":material/factory:",
+        )
         return
 
-    if etapa == ETAPA_ARANCELES:
-        st.caption("Esperando el traslado automático de 2 días al taller. Avance el reloj operativo para simularlo.")
-        return
-
-    if etapa == ETAPA_PAGO_INVOICE:
-        habilitado = rol == ROL_FINANZAS
+    if etapa == ETAPA_ORDEN_BOM:
+        habilitado = rol == ROL_LOGISTICA
         if not habilitado:
-            st.caption("Acción bloqueada · requiere Usuario 02 (Finanzas).")
-        checked = st.checkbox(
-            "Invoice pagado",
-            key=f"chk_invoice_{oid}",
+            st.caption("Acción bloqueada · requiere Usuario 02 (Adrián).")
+        pdf = st.file_uploader(
+            "Purchase Order (PDF)",
+            type=["pdf"],
+            key=f"po_{oid}",
             disabled=not habilitado,
         )
+        slack = st.text_input(
+            "O enlace de Slack",
+            key=f"slack_{oid}",
+            disabled=not habilitado,
+            placeholder="https://slack.com/archives/...",
+        )
         if st.button(
-            "Registrar pago de invoice",
-            key=f"btn_invoice_{oid}",
-            icon=":material/payments:",
+            "Generar orden BOM PCB",
+            key=f"btn_bom_{oid}",
+            icon=":material/description:",
             type="primary",
-            disabled=not (habilitado and checked),
+            disabled=not habilitado,
         ):
-            mensaje = avanzar_etapa(order, rol, ahora, "pagar_invoice")
+            if pdf is None and not (slack or "").strip():
+                st.error("Adjunta la PO o un enlace de Slack.")
+                return
+            adjunto = guardar_pdf(pdf, order["bom_code"], "PO") if pdf else slack.strip()
+            mensaje = avanzar_etapa(order, rol, ahora, "generar_orden_bom", adjunto)
             st.toast(mensaje, icon=":material/check:")
             st.rerun()
         return
 
-    if etapa == ETAPA_PRODUCCION:
-        habilitado = rol == ROL_COMPRAS
+    if etapa == ETAPA_PAGO_INVOICE_P01:
+        habilitado = rol == ROL_FINANZAS
         if not habilitado:
-            st.caption(
-                "Acción bloqueada · requiere Usuario 01 (Compras / logística) · SLA 3 días."
-            )
-        if st.button(
-            "Pedido registrado / en producción",
-            key=f"btn_prod_{oid}",
-            icon=":material/precision_manufacturing:",
-            type="primary",
+            st.caption("Acción bloqueada · requiere Usuario 03 (Julio).")
+        checked = st.checkbox(
+            "Invoice pagado (P01 / QZ)",
+            key=f"chk_inv_p01_{oid}",
             disabled=not habilitado,
+        )
+        pdf = st.file_uploader(
+            "Comprobante de pago (PDF)",
+            type=["pdf"],
+            key=f"pay_p01_{oid}",
+            disabled=not habilitado,
+        )
+        if st.button(
+            "Registrar pago de invoice P01",
+            key=f"btn_inv_p01_{oid}",
+            icon=":material/payments:",
+            type="primary",
+            disabled=not (habilitado and checked),
         ):
-            mensaje = avanzar_etapa(order, rol, ahora, "iniciar_produccion")
+            if pdf is None:
+                st.error("Adjunta el comprobante de pago.")
+                return
+            adjunto = guardar_pdf(pdf, order["bom_code"], "PAY_P01")
+            mensaje = avanzar_etapa(order, rol, ahora, "pagar_invoice_p01", adjunto)
+            st.toast(mensaje, icon=":material/check:")
+            st.rerun()
+        return
+
+    if etapa == ETAPA_ACOPIO_P01:
+        habilitado = rol == ROL_LOGISTICA
+        if not habilitado:
+            st.caption("Acción bloqueada · requiere Usuario 02 (Adrián) · SLA 2 días.")
+        checked = st.checkbox(
+            "Pedido registrado / en acopio (BOM)",
+            key=f"chk_acopio_{oid}",
+            disabled=not habilitado,
+        )
+        if st.button(
+            "Confirmar acopio P01 (QZ)",
+            key=f"btn_acopio_{oid}",
+            icon=":material/inventory_2:",
+            type="primary",
+            disabled=not (habilitado and checked),
+        ):
+            mensaje = avanzar_etapa(order, rol, ahora, "marcar_acopio")
             st.toast(mensaje, icon=":material/check:")
             st.rerun()
         return
 
     if etapa == ETAPA_TRANSITO_P2:
-        st.caption("Etapa automática. El sistema marcará la llegada a Proveedor 02 a los 12 días.")
+        st.caption(
+            "Etapa automática. El sistema marcará la llegada a P02 (JLC) a los 4 días."
+        )
         return
 
-    if etapa == ETAPA_ENSAMBLADO:
-        habilitado = rol == ROL_COMPRAS
+    if etapa == ETAPA_PAGO_INVOICE_P02:
+        habilitado = rol == ROL_FINANZAS
         if not habilitado:
-            st.caption("Acción bloqueada · requiere Usuario 01 (Compras / logística).")
-        if not order["ensamblado_at"]:
-            if st.button(
-                "Ingreso a ensamblado",
-                key=f"btn_ens_{oid}",
-                icon=":material/build:",
-                type="primary",
+            st.caption("Acción bloqueada · requiere Usuario 03 (Julio) · SLA 1 día.")
+        checked = st.checkbox(
+            "Invoice pagado (P02 / JLC)",
+            key=f"chk_inv_p02_{oid}",
+            disabled=not habilitado,
+        )
+        pdf = st.file_uploader(
+            "Comprobante de pago (PDF)",
+            type=["pdf"],
+            key=f"pay_p02_{oid}",
+            disabled=not habilitado,
+        )
+        if st.button(
+            "Registrar pago de invoice P02",
+            key=f"btn_inv_p02_{oid}",
+            icon=":material/payments:",
+            type="primary",
+            disabled=not (habilitado and checked),
+        ):
+            if pdf is None:
+                st.error("Adjunta el comprobante de pago.")
+                return
+            adjunto = guardar_pdf(pdf, order["bom_code"], "PAY_P02")
+            mensaje = avanzar_etapa(order, rol, ahora, "pagar_invoice_p02", adjunto)
+            st.toast(mensaje, icon=":material/check:")
+            st.rerun()
+        return
+
+    if etapa == ETAPA_PRODUCCION_P02:
+        habilitado = rol == ROL_LOGISTICA
+        if not habilitado:
+            st.caption("Acción bloqueada · requiere Usuario 02 (Adrián).")
+        if not order["produccion_at"]:
+            checked = st.checkbox(
+                "En producción (JLC)",
+                key=f"chk_prod_{oid}",
                 disabled=not habilitado,
+            )
+            if st.button(
+                "Marcar en producción",
+                key=f"btn_prod_{oid}",
+                icon=":material/precision_manufacturing:",
+                type="primary",
+                disabled=not (habilitado and checked),
             ):
-                mensaje = avanzar_etapa(order, rol, ahora, "ingreso_ensamblado")
+                mensaje = avanzar_etapa(order, rol, ahora, "marcar_produccion")
                 st.toast(mensaje, icon=":material/check:")
                 st.rerun()
         else:
+            checked = st.checkbox(
+                "Tránsito a Perú",
+                key=f"chk_ship_{oid}",
+                disabled=not habilitado,
+            )
             if st.button(
-                "Mainboards en envío internacional",
+                "Marcar tránsito a Perú",
                 key=f"btn_ship_{oid}",
                 icon=":material/flight_takeoff:",
                 type="primary",
-                disabled=not habilitado,
+                disabled=not (habilitado and checked),
             ):
                 mensaje = avanzar_etapa(order, rol, ahora, "enviar_peru")
                 st.toast(mensaje, icon=":material/check:")
                 st.rerun()
         return
 
-    if etapa == ETAPA_ENVIO:
-        habilitado = rol == ROL_ADUANAS
-        if not habilitado:
-            st.caption("Acción bloqueada · requiere Usuario 03 (Operaciones / aduanas Lima).")
-        if st.button(
-            "Carga en aduanas",
-            key=f"btn_adu_{oid}",
-            icon=":material/warehouse:",
-            type="primary",
-            disabled=not habilitado,
-        ):
-            mensaje = avanzar_etapa(order, rol, ahora, "marcar_aduanas")
-            st.success(mensaje, icon=":material/campaign:")
-            st.toast(mensaje, icon=":material/campaign:")
-            st.rerun()
+    if etapa == ETAPA_ENVIO_PERU:
+        st.caption(
+            "Etapa automática. El sistema marcará llegada a aduanas Lima a los 7 días."
+        )
         return
 
     if etapa == ETAPA_ADUANAS:
         habilitado = rol == ROL_FINANZAS
         if not habilitado:
-            st.caption("Acción bloqueada · requiere Usuario 02 (Finanzas) · SLA 24 h.")
+            st.caption("Acción bloqueada · requiere Usuario 03 (Julio) · SLA 7 días.")
         checked = st.checkbox(
             "Aranceles pagados",
             key=f"chk_tax_{oid}",
+            disabled=not habilitado,
+        )
+        pdf = st.file_uploader(
+            "Comprobante aranceles + DHL (PDF)",
+            type=["pdf"],
+            key=f"pay_tax_{oid}",
             disabled=not habilitado,
         )
         if st.button(
@@ -1297,14 +1601,43 @@ def _render_acciones(order: dict, rol: str, ahora: datetime) -> None:
             type="primary",
             disabled=not (habilitado and checked),
         ):
-            mensaje = avanzar_etapa(order, rol, ahora, "pagar_aranceles")
+            if pdf is None:
+                st.error("Adjunta el comprobante de aranceles / DHL.")
+                return
+            adjunto = guardar_pdf(pdf, order["bom_code"], "ARANCEL")
+            mensaje = avanzar_etapa(order, rol, ahora, "pagar_aranceles", adjunto)
+            st.toast(mensaje, icon=":material/check:")
+            st.rerun()
+        return
+
+    if etapa == ETAPA_TALLER and not order["taller_at"]:
+        habilitado = rol == ROL_TALLER
+        if not habilitado:
+            st.caption("Acción bloqueada · requiere Usuario 04 (Lucho) · SLA 1 día.")
+        checked = st.checkbox(
+            "Recepción en taller",
+            key=f"chk_taller_{oid}",
+            disabled=not habilitado,
+        )
+        if st.button(
+            "Confirmar recepción en taller",
+            key=f"btn_taller_{oid}",
+            icon=":material/factory:",
+            type="primary",
+            disabled=not (habilitado and checked),
+        ):
+            mensaje = avanzar_etapa(order, rol, ahora, "recibir_taller")
             st.toast(mensaje, icon=":material/check:")
             st.rerun()
 
 
 def render_gestion(orders: list[dict], rol: str, ahora: datetime) -> None:
-    activas = [o for o in orders if o["etapa"] != ETAPA_TALLER]
-    cerradas = [o for o in orders if o["etapa"] == ETAPA_TALLER]
+    activas = [
+        o for o in orders if not (o["etapa"] == ETAPA_TALLER and o.get("taller_at"))
+    ]
+    cerradas = [
+        o for o in orders if o["etapa"] == ETAPA_TALLER and o.get("taller_at")
+    ]
 
     pendientes_rol = [o for o in activas if puede_actuar(rol, o)]
     if pendientes_rol:
@@ -1329,18 +1662,21 @@ def render_gestion(orders: list[dict], rol: str, ahora: datetime) -> None:
 
 
 def render_alta(rol: str, ahora: datetime) -> None:
-    if rol != ROL_COMPRAS:
+    if rol != ROL_SOLICITUD:
         st.warning(
-            "Solo el Usuario 01 (Compras y logística internacional) puede registrar un nuevo BOM.",
+            "Solo el Usuario 01 (José) puede registrar una nueva solicitud de compra.",
             icon=":material/lock:",
         )
         st.caption("Cambia el rol en la barra lateral para habilitar el formulario.")
         return
 
-    st.subheader("Nueva orden de compra")
-    st.caption("Adjunta la cotización/invoice del Proveedor 01 o un enlace al hilo de Slack.")
+    st.subheader("Nueva solicitud de compra")
+    st.caption(
+        "Adjunta la Orden General del ERP. Adrián tendrá 4 días de SLA "
+        "para generar la orden BOM PCB."
+    )
 
-    with st.form("nueva_orden", border=True):
+    with st.form("nueva_solicitud", border=True):
         descripcion = st.text_input(
             "Descripción del BOM",
             placeholder="Mainboards control IoT v3 — lote de reposición",
@@ -1355,18 +1691,14 @@ def render_alta(rol: str, ahora: datetime) -> None:
 
         p1, p2 = st.columns(2)
         with p1:
-            proveedor_01 = st.selectbox("Proveedor 01 (origen China)", PROVEEDORES_01)
+            proveedor_01 = st.selectbox("Proveedor 01 · Acopio China", PROVEEDORES_01)
         with p2:
-            proveedor_02 = st.selectbox("Proveedor 02 (ensamblado)", PROVEEDORES_02)
+            proveedor_02 = st.selectbox("Proveedor 02 · Producción / ensamble", PROVEEDORES_02)
 
-        pdf = st.file_uploader("Cotización / invoice (PDF)", type=["pdf"])
-        slack_link = st.text_input(
-            "Enlace de Slack (opcional)",
-            placeholder="https://slack.com/archives/...",
-        )
+        pdf = st.file_uploader("Orden General del ERP (PDF)", type=["pdf"])
 
         enviado = st.form_submit_button(
-            "Crear orden",
+            "Generar solicitud de compra",
             icon=":material/add_box:",
             type="primary",
         )
@@ -1375,13 +1707,13 @@ def render_alta(rol: str, ahora: datetime) -> None:
         if not descripcion.strip():
             st.error("La descripción es obligatoria.", icon=":material/error:")
             return
-        if pdf is None and not slack_link.strip():
+        if pdf is None:
             st.error(
-                "Adjunta un PDF o un enlace de Slack para trazabilidad del invoice.",
+                "Adjunta la Orden General del ERP para iniciar la trazabilidad.",
                 icon=":material/attach_file:",
             )
             return
-        bom = crear_orden(
+        bom = crear_solicitud(
             {
                 "descripcion": descripcion,
                 "sku": sku,
@@ -1390,12 +1722,12 @@ def render_alta(rol: str, ahora: datetime) -> None:
                 "proveedor_01": proveedor_01,
                 "proveedor_02": proveedor_02,
                 "pdf": pdf,
-                "slack_link": slack_link,
             },
             ahora,
         )
         st.success(
-            f"Orden **{bom}** creada. Finanzas tiene 2 días de SLA para pagar el invoice.",
+            f"Solicitud **{bom}** creada. Adrián tiene 4 días de SLA "
+            "para generar la orden BOM PCB.",
             icon=":material/check_circle:",
         )
         st.balloons()
@@ -1406,7 +1738,7 @@ def render_alta(rol: str, ahora: datetime) -> None:
 # ---------------------------------------------------------------------------
 
 st.session_state.setdefault("sim_days", 0)
-st.session_state.setdefault("rol_activo", ROL_COMPRAS)
+st.session_state.setdefault("rol_activo", ROL_SOLICITUD)
 
 init_db()
 rol_activo = render_sidebar()
@@ -1416,7 +1748,7 @@ orders = fetch_orders()
 
 st.title("Trazabilidad de producción")
 st.caption(
-    "Control logístico de insumos desde China hasta Lima · "
+    "Control logístico BOM PCB · China (QZ → JLC) → Lima · "
     f"operando como **{ROLES[rol_activo]['label']}** · "
     f"{ahora.strftime('%d %b %Y %H:%M')}"
 )
@@ -1428,7 +1760,7 @@ dashboard_tab, gestion_tab, alta_tab = st.tabs(
     [
         ":material/space_dashboard: Dashboard principal",
         ":material/tune: Gestión y control",
-        ":material/add_box: Registro de nueva orden",
+        ":material/add_box: Nueva solicitud de compra",
     ],
     on_change="rerun",
 )
